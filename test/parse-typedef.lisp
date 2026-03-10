@@ -1,124 +1,69 @@
 (in-package :c2ffi/test/suite)
 (in-suite parse-typedef-forms)
 
+(test should-parse-id-name
+  (let ((input '(:id 1)))
+    (is (equalp "[ID]1" (run-parser-wrap input %p::form-name-id)))))
+
 (test should-parse-atom
-  (let ((input '(typedef int_fast32_t :long))
-        (expect (%p::form-def -1
-                              (%p::fn-string "INT_FAST32_T")
-                              (%p::ft-typedef-alias 0 :long 1))))
-    (is (equalp expect (%p:parse-form (make-registry '()) input)))))
+  (let ((input '(typedef int_fast32_t :long)))
+    (is (equalp "[SYM]INT_FAST32_T->#KTypeDef:[KW]:LONG->#KAtom"
+                (run-parser-wrap input %p:typedef)))))
 
-(test should-fail-parse-non-atom
-  (let ((input '(typedef int_fast32_t :wong)))
-    (signals type-error (%p:parse-form (make-registry '()) input))))
+(test should-parse-scalar-alias
+  (let* ((input '((typedef __int8_t :long)
+                 (typedef __int_least8_t __int8_t)))
+         (expect "[SYM]__INT_LEAST8_T->#KTypeDef:[SYM]__INT8_T->#KTypeDef:[KW]:LONG->#KAtom")
+         (result (%p:get-parse-result (%p:parse input))))
+    (is (equalp expect (%p:find-result "[SYM]__INT_LEAST8_T" result)))))
 
-(test should-parse-pointed-atom
-  (let ((input '(typedef simple_pointer_type (:pointer :void)))
-        (expect (%p::form-def -1
-                              (%p::fn-string "SIMPLE_POINTER_TYPE")
-                              (%p::ft-typedef-alias 1 :void 1))))
-    (is (equalp expect (%p:parse-form (make-registry '()) input)))))
+(test should-parse-compound-alias-simple
+  (let* ((input '(typedef target (:pointer :long)))
+         (expect ))
+    (is (equalp "[SYM]TARGET->#KTypeDef:[STR]TODO-GEN-ID->#KCompound(P:1,[KW]:LONG->#KAtom,C:0)"
+                (run-parser-wrap input %p:typedef)))))
 
-(test should-fail-pointed-non-atom
-  (let ((input '(typedef bad_pointer (:pointer :wong))))
-    (signals simple-error (%p:parse-form (make-registry '()) input))))
+(test should-parse-compound-alias-lookup
+  (let* ((input '((typedef my_long :long)
+                  (typedef target (:pointer my_long))))
+         (expect "[SYM]TARGET->#KTypeDef:[STR]TODO-GEN-ID->#KCompound(P:1,[SYM]MY_LONG->#KTypeDef:[KW]:LONG->#KAtom,C:0)")
+         (result (%p:get-parse-result (%p:parse input))))
+    (is (equalp expect (%p:find-result "[SYM]TARGET" result)))))
 
-(test should-parse-simple-alias
-  (let ((input '(typedef simple_alias something_else))
-        (expect (%p::form-def -1
-                              (%p::fn-string "SIMPLE_ALIAS")
-                              (%p::ft-typedef-alias 0 1 1)))
-        (registry (make-registry (list
-                                  (%p::form-def -1
-                                                (%p::fn-string "SOMETHING_ELSE")
-                                                (%p::ft-typedef-alias 0 :uchar 1))))))
-    (is (equalp expect (%p:parse-form registry input)))))
+(test should-parse-form-param
+  (let ((input '(:bit-offset 12)))
+    (is (equalp "|OFFSET:12|"
+                (run-parser-wrap input %p::form-param-any)))))
 
-;; TODO: cover missing alias
+(test should-parse-atom-array-compound
+  (let ((input '(:array :unsigned-char 15)))
+    (is (equalp "(P:0,[KW]:UNSIGNED-CHAR->#KAtom,C:15)"
+                (run-parser-wrap input %p::array-compound)))))
 
-(test should-parse-pointed-alias
-  (let ((input '(typedef pointed_alias (:pointer something_else)))
-        (expect (%p::form-def -1
-                              (%p::fn-string "POINTED_ALIAS")
-                              (%p::ft-typedef-alias 1 1 1)))
-        (registry (make-registry (list
-                                  (%p::form-def -1
-                                                (%p::fn-string "SOMETHING_ELSE")
-                                                (%p::ft-typedef-alias 0 :uchar 1))))))
-    (is (equalp expect (%p:parse-form registry input)))))
+(test should-parse-atom-pointer-compound
+  (let ((input '(:pointer :unsigned-char)))
+    (is (equalp "(P:1,[KW]:UNSIGNED-CHAR->#KAtom,C:0)"
+                (run-parser-wrap input %p::pointer-compound)))))
 
-(test should-fail-parse-pointed-to-missing-alias
-  (let ((input '(typedef missing_aliased_type (:pointer doesnt_exist))))
-    (signals type-error (%p:parse-form (make-registry '()) input))))
+(test should-parse-simple-struct-field
+  (let ((input '(allocate (:pointer :void) :bit-offset 0 :bit-size 64 :bit-alignment 64)))
+    (is (equalp "FIELD:[SYM]ALLOCATE[STR]TODO-GEN-ID->#KCompound(P:1,[KW]:VOID->#KAtom,C:0)|OFFSET:0||SIZE:64||ALIGN:64|"
+                (run-parser-wrap input %p::struct-field)))))
 
-(test should-parse-struct-alias
-  (let ((input '(typedef typedef_struct (:struct typedef_struct)))
-        (expect (%p::form-def -1
-                              (%p::fn-string "TYPEDEF_STRUCT")
-                              (%p::ft-typedef-alias 0 1 1)))
-        (registry (make-registry (list
-                                  (%p::form-def -1
-                                                (%p::fn-string "TYPEDEF_STRUCT")
-                                                (%p::ft-struct 0 '()))))))
-    (is (equalp expect (%p:parse-form registry input)))))
+(test should-parse-simple-struct
+  (let ((input '(struct GLFWvidmode :size 64
+                 (width :int :bit-offset 0 :bit-size 32 :bit-alignment 32)
+                 (height :int :bit-offset 32 :bit-size 32 :bit-alignment 32))))
+    (is (equalp "[SYM]GLFWVIDMODE->#KStruct:|SIZE:64|FIELD:[SYM]WIDTH[KW]:INT->#KAtom|OFFSET:0||SIZE:32||ALIGN:32|FIELD:[SYM]HEIGHT[KW]:INT->#KAtom|OFFSET:32||SIZE:32||ALIGN:32|" (run-parser-wrap input %p::struct)))))
 
-(test should-parse-pointed-struct-alias
-  (let ((input '(typedef typedef_pointed_struct (:pointer (:struct some_struct))))
-        (expect (%p::form-def -1
-                              (%p::fn-string "TYPEDEF_POINTED_STRUCT")
-                              (%p::ft-typedef-alias 1 1 1)))
-        (registry (make-registry (list
-                                  (%p::form-def -1
-                                                (%p::fn-string "SOME_STRUCT")
-                                                (%p::ft-struct 0 '()))))))
-    (is (equalp expect (%p:parse-form registry input)))))
+(test should-parse-simple-struct-id-name
+  (let ((input '(struct :id 1 :size 64
+                 (width :int :bit-offset 0 :bit-size 32 :bit-alignment 32))))
+    (is (equalp "[ID]1->#KStruct:|SIZE:64|FIELD:[SYM]WIDTH[KW]:INT->#KAtom|OFFSET:0||SIZE:32||ALIGN:32|" (run-parser-wrap input %p::struct)))))
 
-(test should-parse-deeply-pointed-atom
-  (let ((input '(typedef nested_pointer (:pointer (:pointer (:pointer :void)))))
-        (expect (%p:form-def -1
-                             (%p:fn-string "NESTED_POINTER")
-                             (%p:ft-typedef-alias 3 :void 1))))
-    (is (equalp expect (%p:parse-form (make-registry '()) input)))))
-
-(test should-parse-deeply-pointer-alias
-  (let ((input '(typedef nested_pointer (:pointer (:pointer other_pointed))))
-        (expect (%p:form-def -1
-                             (%p:fn-string "NESTED_POINTER")
-                             (%p:ft-typedef-alias 2 2 1)))
-        (registry (make-registry (list
-                                  (%p:form-def -1
-                                               (%p:fn-string "atom")
-                                               (%p:ft-typedef-alias 0 :int 1))
-                                  (%p:form-def -1
-                                               (%p:fn-string "OTHER_POINTED")
-                                               (%p:ft-typedef-alias 1 1 1))))))
-    (is (equalp expect (%p:parse-form registry input)))))
-
-(test should-fail-parse-missing-struct-alias
-  (let ((input '(typedef typedef_struct (:struct missing_struct))))
-    (signals type-error (%p:parse-form (make-registry '()) input))))
-
-;; TODO: (struct :what)
-
-(test should-fail-parse-non-struct-alias
-  (let ((input '(typedef typedef_struct (:struct not_struct)))
-        (registry (make-registry (list
-                                  (%p::form-def -1
-                                                (%p::fn-string "NOT_STRUCT")
-                                                (%p::ft-typedef-alias 0 :char 1))))))
-    (is (eq 1 (%p:registry-lookup-form-id registry
-                                          '%p::ft-typedef-alias (%p::fn-string "NOT_STRUCT"))))
-    (is (null (%p:registry-lookup-form-id registry
-                                          '%p::ft-struct (%p::fn-string "NOT_STRUCT"))))
-    (signals type-error (%p:parse-form registry input))))
-
-(test should-parse-enum-alias
-  (let ((input '(typedef typedef_enum (:enum test_enum)))
-        (expect (%p::form-def -1
-                              (%p::fn-string "TYPEDEF_ENUM")
-                              (%p::ft-typedef-alias 0 1 1)))
-        (registry (make-registry (list
-                                  (%p::form-def -1
-                                                (%p::fn-string "TEST_ENUM")
-                                                (%p::ft-enum '((:option1 0))))))))
-    (is (equalp expect (%p:parse-form registry input)))))
+(test should-parse-embedded-struct-typedef
+  (let* ((input '((typedef max_align_t
+                   (struct :id 1 :size 64
+                    (nonce1 :long-long :bit-offset 0 :bit-size 64 :bit-alignment 64)))))
+         (result (%p:get-parse-result (%p:parse input))))
+    (is (equalp "" (%p:find-result "[SYM]MAX_ALIGN_T" result)))))
