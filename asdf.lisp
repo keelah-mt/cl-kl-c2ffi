@@ -9,6 +9,8 @@
 
 (defclass c2ffi-lisp-file (asdf:cl-source-file)
   ((type :initform "h")
+   (name-translator :initarg :name-translator
+                    :initform c2ffi/parser:to-param-case)
    (package :initarg :package
             :initform (error ":package is required"))
    (foreign-library-name :initarg :foreign-library-name
@@ -35,12 +37,13 @@ then a lisp file for the current platform."))
   (let* ((input (asdf:component-pathname c))
          (output (first (asdf:output-files o c))))
     (format t "~&; Running c2ffi on ~A => ~A~%" input output)
-    (with-slots (package foreign-library-name foreign-library-spec) c
-      (c2ffi/translator:translate-file input
-                                       output
-                                       :package-designator package
-                                       :library-name foreign-library-name
-                                       :library-spec foreign-library-spec)))
+    (with-slots (name-translator package foreign-library-name foreign-library-spec) c
+      (cl-kl-c2ffi:translate-file input
+                                  output
+                                  :name-translator name-translator
+                                  :package-designator package
+                                  :library-name foreign-library-name
+                                  :library-spec foreign-library-spec)))
   (unless (probe-file (first (asdf:output-files o c)))
     (error "c2ffi failed to produce output for ~A" c)))
 

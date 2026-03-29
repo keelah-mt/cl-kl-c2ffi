@@ -3,17 +3,22 @@
 
 (coalton-toplevel
 
-  (define (make-form-registry) (the (%hm:HashMap String Form) %hm:empty))
+  (declare find-form (String -> ParserContext -> (Optional RankedForm)))
+  (define (find-form lookup-name context)
+    (let ((forms (%hm:lookup (.registry context) lookup-name)))
+      (match forms
+        ((Some (Cons rf _)) (Some rf))
+        (_ None))))
 
-  (define (make-empty-context)
-    (ParserContext (make-form-registry) (make-list)))
+  (declare get-find-form (String -> ParserContext -> RankedForm))
+  (define (get-find-form lookup-name context)
+    (match (find-form lookup-name context)
+      ((Some value) value)
+      ((None) (error "not found"))))
 
-  (declare update-context (ParserContext -> Form -> ParserContext))
-  (define (update-context ctx f)
-    (match f
-      ((Form name _)
-       (ParserContext (%hm:insert (.registry ctx) (into name) f)
-                      (cons name (.order ctx))))))
+  (declare get-form-string (String -> ParserContext -> String))
+  (define (get-form-string name context)
+    (into (get-find-form name context)))
 
   (declare feed-input (ParserContext -> InputView -> ParserContext))
   (define (feed-input context view)
@@ -23,9 +28,5 @@
          (update-context context f))
         ((Err e)
          (error (the String (into e)))))))
-
-  (declare translate (ParserContext -> String -> (List Unit)))
-  (define (translate _context _pkg)
-    (make-list))
 
 )

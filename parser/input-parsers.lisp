@@ -3,6 +3,61 @@
 
 (coalton-toplevel
 
+  (declare parse-ctype (Symbol -> (Optional CType)))
+  (define (parse-ctype sym)
+    (match (%str:downcase (%sym:symbol-name sym))
+      ;; --- Native C Types (Require Signedness) ---
+      ("char"                (Some (CTNative CNChar Signed)))
+      ("signed-char"         (Some (CTNative CNChar Signed)))
+      ("unsigned-char"       (Some (CTNative CNChar Unsigned)))
+      ("uchar"               (Some (CTNative CNChar Unsigned)))
+
+      ("short"               (Some (CTNative CNShort Signed)))
+      ("unsigned-short"      (Some (CTNative CNShort Unsigned)))
+      ("ushort"              (Some (CTNative CNShort Unsigned)))
+
+      ("int"                 (Some (CTNative CNInt Signed)))
+      ("unsigned-int"        (Some (CTNative CNInt Unsigned)))
+      ("uint"                (Some (CTNative CNInt Unsigned)))
+
+      ("long"                (Some (CTNative CNLong Signed)))
+      ("unsigned-long"       (Some (CTNative CNLong Unsigned)))
+      ("ulong"               (Some (CTNative CNLong Unsigned)))
+
+      ("long-long"           (Some (CTNative CNLongLong Signed)))
+      ("unsigned-long-long"  (Some (CTNative CNLongLong Unsigned)))
+      ("llong"               (Some (CTNative CNLongLong Signed)))
+      ("ullong"              (Some (CTNative CNLongLong Unsigned)))
+
+      ;; --- Fixed Width / System Types (Self-Signed) ---
+      ("int8"                (Some (CTSystem CSI8)))
+      ("uint8"               (Some (CTSystem CSU8)))
+      ("int16"               (Some (CTSystem CSI16)))
+      ("uint16"              (Some (CTSystem CSU16)))
+      ("int32"               (Some (CTSystem CSI32)))
+      ("uint32"              (Some (CTSystem CSU32)))
+      ("int64"               (Some (CTSystem CSI64)))
+      ("uint64"              (Some (CTSystem CSU64)))
+
+      ("size"                (Some (CTSystem CSSize)))
+      ("ssize"               (Some (CTSystem CSSSize)))
+      ("intptr"              (Some (CTSystem CSIntPtr)))
+      ("uintptr"             (Some (CTSystem CSUIntPtr)))
+      ("ptrdiff"             (Some (CTSystem CSPtrDiff)))
+      ("offset"              (Some (CTSystem CSOffset)))
+
+      ;; --- Floating Point ---
+      ("float"               (Some (CTFloat FPSingle)))
+      ("double"              (Some (CTFloat FPDouble)))
+      ("long-double"         (Some (CTFloat FPLongDouble)))
+      ("__float128"          (Some (CTFloat FPLongDouble)))
+
+      ;; --- Special ---
+      ("void"                (Some CTVoid))
+      ("function-pointer"    (Some CTFunctionPointer))
+
+      (_ None)))
+
   (declare validate ((:a -> (Optional String)) -> Parser :a -> Parser :a))
   (define (validate f p)
     (let ((pf (get-parser p))
@@ -18,7 +73,7 @@
               ((Some str)
                (Err (push-error input
                                 pn
-                                (mconcat (make-list "expected: " str))
+                                (<> "expected: " str)
                                 (make-error-stack))))))
            ((Err e) (Err (push-trace pn "validate failed in reader" e))))))))
 
@@ -39,6 +94,25 @@
                     None
                     (Some "keyword")))
               (Parser "read-keyword" (get-parser read-symbol))))
+
+  (declare read-ctype (Parser CType))
+  (define read-ctype
+    (let ((pf (get-parser read-keyword))
+          (pn "read-ctype"))
+      (Parser
+       pn
+       (fn (input state)
+         (match (pf input state)
+           ((Ok (Tuple3 v c i))
+            (match (parse-ctype v)
+              ((Some ctype)
+               (Ok (Tuple3 ctype c i)))
+              ((None)
+               (Err (push-error input
+                                pn
+                                (<> "expected c-type, got: :" (%sym:symbol-name v))
+                                (make-error-stack))))))
+           ((Err e) (Err (push-trace pn "read-ctype failed in keyword reader" e))))))))
 
   (declare read-string (Parser String))
   (define read-string
@@ -79,8 +153,7 @@
   (define (open-list p)
     (let ((pf (get-parser p))
           ;;(pn (mconcat (make-list "open-list(" (get-parser-name p) ")")))
-          (pn "open-list")
-          )
+          (pn "open-list"))
       (Parser
        pn
        (fn (input state)
@@ -105,19 +178,18 @@
          ((Err e)
           (Err (push-error input "empty-list" e (make-error-stack))))))))
 
-  (declare many ((Parser :a) -> (Parser (List :a))))
+  (declare many ((Integer -> (Parser :a)) -> (Parser (List :a))))
   (define (many p)
-    (let ((pf (get-parser p))
-          (pn (get-parser-name p))
-          (iter (fn (input context)
-                  (match (pf input context)
-                    ((Err _) (Tuple3 Nil context input))
-                    ((Ok (Tuple3 va ca ia))
-                     (match (iter ia ca)
-                       ((Tuple3 vb cb ib) (Tuple3 (Cons va vb) cb ib))))))))
+    (let ((iter (fn (input context counter)
+                  (let ((pfi (get-parser (p counter))))
+                    (match (pfi input context)
+                      ((Err _) (Tuple3 Nil context input))
+                      ((Ok (Tuple3 va ca ia))
+                       (match (iter ia ca (1+ counter))
+                         ((Tuple3 vb cb ib) (Tuple3 (Cons va vb) cb ib)))))))))
       (Parser
-       (<> "many:" pn)
+       (<> "many:" (get-parser-name (p 0)))
        (fn (input context)
-         (Ok (iter input context))))))
+         (Ok (iter input context 0))))))
 
 )

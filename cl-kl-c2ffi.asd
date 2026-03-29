@@ -8,9 +8,8 @@
                        (uiop:subpathname *load-pathname* "README.md"))
   :depends-on (#:cffi #:alexandria #:serapeum #:coalton #:cl-kl-c2ffi/parser)
   :serial t
-  :components ((:file "translator")
-               ;;(:file "asdf")
-               )
+  :components ((:file "cl-kl-c2ffi")
+               (:file "asdf"))
   :in-order-to ((test-op (test-op :cl-kl-c2ffi/test))))
 
 (defsystem "cl-kl-c2ffi/parser"
@@ -24,7 +23,9 @@
                (:file "into-str")
                (:file "input-parsers")
                (:file "form-parsers")
-               (:file "run-parser")))
+               (:file "run-parser")
+               (:file "translator")
+               (:file "run-translator")))
 
 (defsystem "cl-kl-c2ffi/test"
   :description "cl-kl-c2ffi: tests"
@@ -32,14 +33,8 @@
   :pathname "test"
   :serial t
   :components ((:file "suite")
-               (:file "parse-typedef")
-               ;; (:file "parse-const")
-               ;; (:file "parse-enum")
-               ;; (:file "parse-typedef")
-               ;; (:file "parse-struct")
-               ;; (:file "parse-function")
-               ;; (:file "process-input")
-               )
+               (:file "parse-forms")
+               (:file "translate-forms"))
   :perform (test-op (op c)
                     (symbol-call :fiveam :run!
                                  (find-symbol* :c2ffi-test-all :cl-kl-c2ffi/test/suite))))

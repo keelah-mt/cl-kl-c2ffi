@@ -45,16 +45,6 @@
         ((ParserError msg) (mconcat (make-list "  ->  " msg)))
         ((FatalError msg) (mconcat (make-list "  ->  " msg))))))
 
-  ;; (define-instance (Into ErrorStack String)
-  ;; (define (into s)
-  ;;   (match (find (fn (e)
-  ;;                  (match e
-  ;;                    ((FatalError _msg) True)
-  ;;                    (_ False)))
-  ;;                s)
-  ;;     ((Some fatal) (into fatal))
-  ;;     ((None) (mconcatmap (fn (e) (mconcat (make-list "=> " (into e)))) (take 2 s))))))
-
   (define-instance (Into ErrorStack String)
   (define (into s)
     (<> "=> " (mconcatmap into s))))
@@ -63,7 +53,18 @@
     (FNSymbol Symbol)
     (FNKeyword Symbol)
     (FNString String)
-    (FNId Integer))
+    (FNId Integer)
+    (FNNone))
+
+  (define-instance (Into FormName String)
+    (define (into form-name)
+      (let ((to-str (fn (s) (lisp String (s) (cl:format nil "~S" s)))))
+        (match form-name
+          ((FNSymbol sym) (<> "$SYM:" (to-str sym)))
+          ((FNKeyword kw) (<> "$KW:" (to-str kw)))
+          ((FNString str) (<> "$STR:" str))
+          ((FNId id) (<> "$ID:" (into id)))
+          ((FNNone) "$NONE:")))))
 
   (define-type Form (Form FormName FormKind))
 
@@ -73,30 +74,120 @@
     (PAlignment Integer))
   (define-type-alias FormParams (List FormParam))
 
+  (define-type-alias ConstValue (Tuple Form String))
   (define-type-alias StructField (Tuple Form FormParams))
-  (define-type-alias EnumField (Tuple3 FormName Integer FormParams))
+  (define-type-alias EnumField (Tuple FormName Integer))
   (define-type-alias FunctionArg Form)
   (define-type-alias FunctionRetVal FormKind)
+  (define-type-alias LookupId String)
 
-  (define-struct CompoundValue
-    (target FormKind)
-    (ptr-count Integer)
-    (elem-count Integer))
+  (define-type CompoundValue
+    (CVTarget Form)
+    (CVPointer CompoundValue)
+    (CVArray CompoundValue Integer))
+
+  (define-type Signedness Signed Unsigned)
+  (define-type FloatPrecision FPSingle FPDouble FPLongDouble)
+
+  (define-type CNative
+    CNChar CNShort CNInt CNLong CNLongLong)
+
+  (define-type CSystem
+    CSI8 CSU8 CSI16 CSU16 CSI32 CSU32 CSI64 CSU64
+    CSSize CSSSize CSIntPtr CSUIntPtr CSPtrDiff CSOffset)
+
+  (define-type CType
+    (CTNative CNative Signedness)
+    (CTSystem CSystem)
+    (CTFloat FloatPrecision)
+    (CTVoid)
+    (CTFunctionPointer))
 
   (define-type FormKind
-    (KAtom Symbol)
+    (KAtom CType)
     (KCompound CompoundValue)
+    (KInlined Form)
+    (KLookup LookupId)
+    (KConst ConstValue)
     (KStruct FormParams (List StructField))
     (KUnion (List StructField))
     (KEnum (List EnumField))
     (KFunction (List FunctionArg) FunctionRetVal)
     (KTypeDef Form))
 
-  (define-type-alias FormRegistry (%hm:hashmap String Form))
+  (define-type LookupTag LTypeDef LStruct LUnion LEnum LNone)
+
+  (define-instance (Into LookupTag String)
+    (define (into l)
+      (match l
+        ((LTypeDef) "#TypeDef")
+        ((LStruct) "#Struct")
+        ((LUnion) "#Union")
+        ((LEnum) "#Enum")
+        ((LNone) "#"))))
+
+  (define-instance (Into FormKind LookupTag)
+    (define (into k)
+      (match k
+        ((KTypeDef _) LTypeDef)
+        ((KStruct _ _) LStruct)
+        ((KUnion _) LUnion)
+        ((KEnum _) LEnum)
+        (_ LNone))))
+
+  (declare make-lookup-id (FormName -> LookupTag -> LookupId))
+  (define (make-lookup-id name tag)
+    (<> (into name) (into tag)))
+
+  (declare get-lookup-id (Form -> LookupId))
+  (define (get-lookup-id (Form name kind))
+    (make-lookup-id name (into kind)))
+
+  (define-type-alias FormRank UFix)
+  (define-type RankedForm (RankedForm FormRank Form))
+
+  (define-type-alias FormRegistry (%hm:hashmap LookupId (List RankedForm)))
 
   (define-struct ParserContext
     (registry FormRegistry)
-    (order (List FormName)))
+    (order (Vector LookupId)))
+
+    (define (make-form-registry) (the (%hm:HashMap String (List RankedForm)) %hm:empty))
+
+  (define (make-empty-context)
+    (ParserContext (make-form-registry) (%vec:new)))
+
+  (declare update-context (ParserContext -> Form -> ParserContext))
+  (define (update-context ctx f)
+    (match f
+      ((Form name kind)
+       (let ((registry (.registry ctx))
+             (order (.order ctx))
+             (lookup-name (make-lookup-id name (into kind)))
+             (rank (%vec:length (.order ctx)))
+             (existing-forms (%hm:lookup registry lookup-name)))
+         (ParserContext (%hm:insert registry
+                                    lookup-name
+                                    (match existing-forms
+                                      ((Some ex)
+                                       (cons (RankedForm rank f) ex))
+                                      ((None)
+                                       (make-list (RankedForm rank f)))))
+                        (%vec:append order (%vec:singleton lookup-name)))))))
+
+  (declare lookup-form (FormRegistry -> LookupId -> (Optional FormRank) -> (Optional Form)))
+  (define (lookup-form registry lookup-id rank-upper-bound)
+    (match (%hm:lookup registry lookup-id)
+      ((Some fs)
+       (match rank-upper-bound
+         ((Some bound)
+          (map (fn ((RankedForm _rank f)) f)
+               (find (fn ((RankedForm rank _)) (<= rank bound)) fs)))
+         ((None)
+          (map (fn ((RankedForm _rank f)) f)
+               (head fs)))))
+      ((None)
+       None)))
 
   (define-type-alias (ParserState :a) (Result ErrorStack (Tuple3 :a ParserContext InputView)))
   (define-type-alias (ParserFn :a) (InputView -> ParserContext -> (ParserState :a)))
